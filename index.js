@@ -1,96 +1,173 @@
 const express = require('express');
+const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
-const multer = require('multer');
-const { Command } = require('commander');
-
-const program = new Command();
-
-program
-  .requiredOption('-h, --host <host>', 'server host')
-  .requiredOption('-p, --port <port>', 'server port')
-  .requiredOption('-c, --cache <cacheDir>', 'cache directory')
-  .parse(process.argv);
-
-const options = program.opts();
-const cacheDir = path.resolve(options.cache);
-
-if (!fs.existsSync(cacheDir)) {
-  fs.mkdirSync(cacheDir, { recursive: true });
-}
+const swaggerJsdoc = require('swagger-jsdoc');
+const swaggerUi = require('swagger-ui-express');
 
 const app = express();
-app.use(express.text());
+const PORT = process.env.PORT || 3000;
+const CACHE_DIR = path.join(__dirname, 'cache');
+
+if (!fs.existsSync(CACHE_DIR)) {
+  fs.mkdirSync(CACHE_DIR);
+}
+
+app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-const storage = multer.memoryStorage();
-const upload = multer({ storage });
+const upload = multer({ dest: 'uploads/' });
 
-// HTML форма
-app.get('/UploadForm.html', (req, res) => {
-  res.sendFile(path.join(__dirname, 'UploadForm.html'));
-});
+const swaggerOptions = {
+  definition: {
+    openapi: '3.0.0',
+    info: {
+      title: 'Note Service API',
+      version: '1.0.0',
+      description: 'API для роботи з нотатками',
+    },
+  },
+  apis: ['./index.js'],
+};
 
-// POST /write (multipart form)
-app.post('/write', upload.none(), (req, res) => {
-  const { note_name, note } = req.body;
-  const notePath = path.join(cacheDir, note_name);
+const swaggerSpec = swaggerJsdoc(swaggerOptions);
+app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
-  if (fs.existsSync(notePath)) {
-    return res.status(400).send('Note already exists');
-  }
-
-  fs.writeFileSync(notePath, note, 'utf8');
-  res.status(201).send('Note created');
-});
-
-// GET /notes/:name
-app.get('/notes/:name', (req, res) => {
-  const notePath = path.join(cacheDir, req.params.name);
-
-  if (!fs.existsSync(notePath)) {
-    return res.status(404).send('Note not found');
-  }
-
-  const content = fs.readFileSync(notePath, 'utf8');
-  res.send(content);
-});
-
-// PUT /notes/:name
-app.put('/notes/:name', (req, res) => {
-  const notePath = path.join(cacheDir, req.params.name);
-
-  if (!fs.existsSync(notePath)) {
-    return res.status(404).send('Note not found');
-  }
-
-  fs.writeFileSync(notePath, req.body, 'utf8');
-  res.send('Note updated');
-});
-
-// DELETE /notes/:name
-app.delete('/notes/:name', (req, res) => {
-  const notePath = path.join(cacheDir, req.params.name);
-
-  if (!fs.existsSync(notePath)) {
-    return res.status(404).send('Note not found');
-  }
-
-  fs.unlinkSync(notePath);
-  res.send('Note deleted');
-});
-
-// GET /notes (list all)
+/**
+ * @swagger
+ * /notes:
+ *   get:
+ *     summary: Отримати список усіх нотаток
+ *     responses:
+ *       200:
+ *         description: Список файлів
+ */
 app.get('/notes', (req, res) => {
-  const notes = fs.readdirSync(cacheDir).map(file => {
-    const content = fs.readFileSync(path.join(cacheDir, file), 'utf8');
-    return { name: file, text: content };
+  fs.readdir(CACHE_DIR, (err, files) => {
+    if (err) return res.status(500).send('Помилка читання каталогу');
+    res.json(files);
   });
-
-  res.json(notes);
 });
 
-// Start server
-app.listen(options.port, options.host, () => {
-  console.log(`Server running at http://${options.host}:${options.port}`);
+/**
+ * @swagger
+ * /notes/{name}:
+ *   get:
+ *     summary: Отримати вміст конкретної нотатки
+ *     parameters:
+ *       - in: path
+ *         name: name
+ *         required: true
+ *         description: Назва нотатки
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Вміст нотатки
+ *       404:
+ *         description: Нотатку не знайдено
+ */
+app.get('/notes/:name', (req, res) => {
+  const notePath = path.join(CACHE_DIR, req.params.name);
+  if (!fs.existsSync(notePath)) return res.status(404).send('Нотатку не знайдено');
+  res.sendFile(notePath);
+});
+
+/**
+ * @swagger
+ * /notes/{name}:
+ *   put:
+ *     summary: Оновити нотатку
+ *     parameters:
+ *       - in: path
+ *         name: name
+ *         required: true
+ *         description: Назва нотатки
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         text/plain:
+ *           schema:
+ *             type: string
+ *             example: Новий вміст нотатки
+ *     responses:
+ *       200:
+ *         description: Нотатку оновлено
+ *       404:
+ *         description: Нотатку не знайдено
+ */
+app.put('/notes/:name', (req, res) => {
+  const notePath = path.join(CACHE_DIR, req.params.name);
+  if (!fs.existsSync(notePath)) return res.status(404).send('Нотатку не знайдено');
+  fs.writeFileSync(notePath, req.body.data || '');
+  res.send('Нотатку оновлено');
+});
+
+/**
+ * @swagger
+ * /notes/{name}:
+ *   delete:
+ *     summary: Видалити нотатку
+ *     parameters:
+ *       - in: path
+ *         name: name
+ *         required: true
+ *         description: Назва нотатки
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Нотатку видалено
+ *       404:
+ *         description: Нотатку не знайдено
+ */
+app.delete('/notes/:name', (req, res) => {
+  const notePath = path.join(CACHE_DIR, req.params.name);
+  if (!fs.existsSync(notePath)) return res.status(404).send('Нотатку не знайдено');
+  fs.unlinkSync(notePath);
+  res.send('Нотатку видалено');
+});
+
+/**
+ * @swagger
+ * /write:
+ *   post:
+ *     summary: Завантажити нову нотатку
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               note:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       200:
+ *         description: Файл завантажено
+ */
+app.post('/write', upload.single('note'), (req, res) => {
+  const tempPath = req.file.path;
+  const targetPath = path.join(CACHE_DIR, req.file.originalname);
+  fs.rename(tempPath, targetPath, err => {
+    if (err) return res.status(500).send('Помилка збереження файлу');
+    res.send('Файл збережено');
+  });
+});
+
+
+app.get('/', (req, res) => {
+  res.send(`
+    <form method="POST" enctype="multipart/form-data" action="/write">
+      <input type="file" name="note" />
+      <button type="submit">Завантажити</button>
+    </form>
+  `);
+});
+
+app.listen(PORT, () => {
+  console.log(`Сервер запущено на http://localhost:${PORT}`);
 });

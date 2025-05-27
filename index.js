@@ -12,6 +12,10 @@ const CACHE_DIR = path.join(__dirname, 'cache');
 if (!fs.existsSync(CACHE_DIR)) {
   fs.mkdirSync(CACHE_DIR);
 }
+app.use(express.static(path.join(__dirname, 'UploadForm.html')));
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'UploadForm.html'));
+});
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
